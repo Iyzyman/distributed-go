@@ -1,4 +1,4 @@
-package bookingproto
+package common
 
 import (
     "encoding/binary"
