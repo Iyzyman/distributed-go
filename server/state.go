@@ -7,7 +7,7 @@ import (
     "sync"
     "time"
 
-    "path/to/yourproject/common"
+    "../common"
 )
 
 // Constants for invocation semantics
