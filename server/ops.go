@@ -130,6 +130,9 @@ func (s *ServerState) handleQuery(name string, days []uint8) string {
 				bk.StartDay, bk.StartHour, bk.StartMinute,
 				bk.EndDay, bk.EndHour, bk.EndMinute,
 			)
+			if len(bk.Participants) > 0 {
+				result += fmt.Sprintf("      Participants: %v\n", bk.Participants)
+			}
 		}
 	}
 	log.Printf("Query result for '%s': %s", name, result)
