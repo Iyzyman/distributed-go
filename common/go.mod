@@ -1,3 +1,3 @@
-module github.com/Iyzyman/distributed-go/server
+module common
 
 go 1.24.1
