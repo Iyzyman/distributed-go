@@ -5,20 +5,22 @@ import (
     "fmt"
     "log"
     "net"
-    "strconv"
     "time"
 
-    "../common"
+    "github.com/Iyzyman/distributed-go/common"
 )
 
 // handlePacket is called from main.go whenever a packet arrives
 func (s *ServerState) handlePacket(data []byte, clientAddr *net.UDPAddr) {
+    log.Printf("Received packet from %s", clientAddr)
+
     // 1) Unmarshal the request
     reqMsg, err := common.UnmarshalRequest(data)
     if err != nil {
         log.Printf("Failed to unmarshal request from %s: %v", clientAddr, err)
         return
     }
+    log.Printf("Unmarshaled request: OpCode=%d, RequestID=%d", reqMsg.OpCode, reqMsg.RequestID)
 
     // 2) Build a RequestKey for dedup (at-most-once only)
     key := RequestKey{
@@ -31,11 +33,8 @@ func (s *ServerState) handlePacket(data []byte, clientAddr *net.UDPAddr) {
         s.historyLock.Lock()
         cachedReply, found := s.history[key]
         s.historyLock.Unlock()
-
         if found {
-            // Duplicate request, just resend old reply
-            log.Printf("Duplicate request %d from %s -> resending cached reply",
-                reqMsg.RequestID, clientAddr)
+            log.Printf("Duplicate request %d from %s -> resending cached reply", reqMsg.RequestID, clientAddr)
             rawReply, marshalErr := common.MarshalReply(cachedReply)
             if marshalErr == nil {
                 s.conn.WriteToUDP(rawReply, clientAddr)
@@ -60,13 +59,14 @@ func (s *ServerState) handlePacket(data []byte, clientAddr *net.UDPAddr) {
         log.Printf("Error marshalling reply: %v", err)
         return
     }
+    log.Printf("Sending reply for RequestID=%d to %s", reqMsg.RequestID, clientAddr)
     s.conn.WriteToUDP(rawReply, clientAddr)
 }
 
 // intersectsDays returns true if a booking touches any of the input days
 func intersectsDays(bk Booking, days []uint8) bool {
     for _, d := range days {
-        // if the booking starts at day bk.StartDay and ends at day bk.EndDay
+        // if the booking starts at day bk.StartDay and ends at day bk.EndDay,
         // check if d is in [StartDay..EndDay] (naive approach)
         if d >= bk.StartDay && d <= bk.EndDay {
             return true
@@ -78,6 +78,7 @@ func intersectsDays(bk Booking, days []uint8) bool {
 // notifySubscribers is called whenever a facility’s schedule changes
 func (s *ServerState) notifySubscribers(facility, updateMsg string) {
     now := time.Now()
+    log.Printf("Notifying subscribers of facility '%s' update: %s", facility, updateMsg)
 
     s.monitorLock.Lock()
     defer s.monitorLock.Unlock()
@@ -92,43 +93,37 @@ func (s *ServerState) notifySubscribers(facility, updateMsg string) {
                 Status:    0,
                 Data:      fmt.Sprintf("Facility=%s updated: %s", facility, updateMsg),
             }
-
             raw, err := common.MarshalReply(cb)
             if err == nil {
                 s.conn.WriteToUDP(raw, sub.ClientAddr)
+                log.Printf("Sent callback to %s for facility '%s'", sub.ClientAddr, facility)
             }
-
             newSubs = append(newSubs, sub)
         } else if now.Before(sub.ExpiresAt) {
-            // Different facility or not expired
             newSubs = append(newSubs, sub)
         }
-        // else it's expired, skip
+        // else, subscription expired – do not add
     }
-
-    // Clean up expired
     s.monitorSubs = newSubs
 }
 
-
 // handleQuery returns a string listing bookings on the specified days for the facility
 func (s *ServerState) handleQuery(name string, days []uint8) string {
+    log.Printf("Handling Query for facility '%s' on days %v", name, days)
     s.dataLock.Lock()
     fac, ok := s.facilityData[name]
     s.dataLock.Unlock()
     if !ok {
+        log.Printf("Facility '%s' not found during Query", name)
         return fmt.Sprintf("Error: Facility '%s' not found", name)
     }
-
-    // If days is empty, we might return all bookings
     if len(days) == 0 {
-        return s.listAllBookings(fac)
+        result := s.listAllBookings(fac)
+        log.Printf("Query result for '%s': %s", name, result)
+        return result
     }
-
-    // Build a response with just the bookings that intersect those days
     result := fmt.Sprintf("Facility=%s availability for days=%v:\n", name, days)
     for _, bk := range fac.Bookings {
-        // If any day in [bk.StartDay..bk.EndDay] overlaps with 'days', we show it
         if intersectsDays(bk, days) {
             result += fmt.Sprintf("  - %s: Day %d (%02d:%02d) to Day %d (%02d:%02d)\n",
                 bk.ConfirmationID,
@@ -137,53 +132,50 @@ func (s *ServerState) handleQuery(name string, days []uint8) string {
             )
         }
     }
+    log.Printf("Query result for '%s': %s", name, result)
     return result
 }
 
 // timesOverlap returns true if [start1, end1) intersects [start2, end2).
 func timesOverlap(start1, end1, start2, end2 int32) bool {
-    // Overlap occurs if the start of one range is before the end of the other, and vice versa
     return (start1 < end2) && (start2 < end1)
 }
 
 // toAbsoluteMinutes converts (day, hour, minute) to an absolute minute count from Monday 0:00.
-// e.g., Monday 9:00 -> day=0, hour=9 => 9 * 60 = 540
 func toAbsoluteMinutes(day, hour, minute uint8) int32 {
     return int32(day)*24*60 + int32(hour)*60 + int32(minute)
 }
 
-
 // handleBookFacility creates a new booking if no overlap.
 func (s *ServerState) handleBookFacility(req common.RequestMessage) (string, int32) {
     facName := req.FacilityName
+    log.Printf("Handling BookFacility for facility '%s'", facName)
 
-    // Acquire lock to read/modify facility data
     s.dataLock.Lock()
     defer s.dataLock.Unlock()
 
     fac, ok := s.facilityData[facName]
     if !ok {
+        log.Printf("Facility '%s' not found in BookFacility", facName)
         return fmt.Sprintf("Facility '%s' not found", facName), -1
     }
 
-    // Convert requested start/end to absolute minutes
     newStart := toAbsoluteMinutes(req.StartDay, req.StartHour, req.StartMinute)
-    newEnd   := toAbsoluteMinutes(req.EndDay, req.EndHour, req.EndMinute)
+    newEnd := toAbsoluteMinutes(req.EndDay, req.EndHour, req.EndMinute)
     if newEnd <= newStart {
+        log.Printf("Invalid booking times: end time is not after start time")
         return "Error: End time must be after start time.", -1
     }
 
-    // Check for collision with existing bookings
     for _, bk := range fac.Bookings {
         existingStart := toAbsoluteMinutes(bk.StartDay, bk.StartHour, bk.StartMinute)
-        existingEnd   := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
+        existingEnd := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
         if timesOverlap(newStart, newEnd, existingStart, existingEnd) {
-            // There's a conflict
+            log.Printf("Time conflict detected for facility '%s'", facName)
             return "Time conflict with an existing booking.", 1
         }
     }
 
-    // If no conflict, create a new booking
     newID := fmt.Sprintf("BKG-%d", time.Now().UnixNano())
     newBooking := Booking{
         ConfirmationID: newID,
@@ -193,28 +185,29 @@ func (s *ServerState) handleBookFacility(req common.RequestMessage) (string, int
         EndDay:         req.EndDay,
         EndHour:        req.EndHour,
         EndMinute:      req.EndMinute,
+        Participants:   []string{}, // Initially empty
     }
     fac.Bookings = append(fac.Bookings, newBooking)
 
-    // Notify monitoring clients that facility updated
     s.notifySubscribers(facName, fmt.Sprintf("New booking created: %s", newID))
-
     msg := fmt.Sprintf("Booked '%s' from Day %d (%02d:%02d) to Day %d (%02d:%02d). ID=%s",
         facName,
         req.StartDay, req.StartHour, req.StartMinute,
         req.EndDay, req.EndHour, req.EndMinute,
         newID,
     )
+    log.Printf("Booking successful: %s", msg)
     return msg, 0
 }
 
-
-// handleChangeBooking locates the booking by ConfirmationID and shifts by OffsetMinutes
+// handleChangeBooking locates the booking by ConfirmationID and updates its time.
 func (s *ServerState) handleChangeBooking(req common.RequestMessage) (string, int32) {
-    confID   := req.ConfirmationID
+    confID := req.ConfirmationID
+    log.Printf("Handling ChangeBooking for ConfirmationID '%s'", confID)
     newStart := toAbsoluteMinutes(req.StartDay, req.StartHour, req.StartMinute)
-    newEnd   := toAbsoluteMinutes(req.EndDay, req.EndHour, req.EndMinute)
+    newEnd := toAbsoluteMinutes(req.EndDay, req.EndHour, req.EndMinute)
     if newEnd <= newStart {
+        log.Printf("Invalid new times: end time is not after start time")
         return "Error: End time must be after start time.", -1
     }
 
@@ -226,14 +219,13 @@ func (s *ServerState) handleChangeBooking(req common.RequestMessage) (string, in
     var oldIndex int
     var facName string
 
-    // 1) Find the old booking
     for fName, facility := range s.facilityData {
         for i, bk := range facility.Bookings {
             if bk.ConfirmationID == confID {
                 oldBooking = &bk
-                oldIndex   = i
-                oldFac     = facility
-                facName    = fName
+                oldIndex = i
+                oldFac = facility
+                facName = fName
                 break
             }
         }
@@ -242,27 +234,27 @@ func (s *ServerState) handleChangeBooking(req common.RequestMessage) (string, in
         }
     }
     if oldBooking == nil {
+        log.Printf("Booking '%s' not found in ChangeBooking", confID)
         return fmt.Sprintf("Error: Booking %s not found", confID), -1
     }
 
-    // Preserve old participants before we remove the booking
     oldParticipants := oldBooking.Participants
 
-    // 2) Remove the old booking from the list
+    // Remove old booking from the list.
     oldFac.Bookings = append(oldFac.Bookings[:oldIndex], oldFac.Bookings[oldIndex+1:]...)
 
-    // 3) Check collision for new times
+    // Check for collision with remaining bookings.
     for _, bk := range oldFac.Bookings {
         start := toAbsoluteMinutes(bk.StartDay, bk.StartHour, bk.StartMinute)
-        end   := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
+        end := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
         if timesOverlap(newStart, newEnd, start, end) {
-            // revert old booking
+            // Revert the removal.
             oldFac.Bookings = append(oldFac.Bookings, *oldBooking)
+            log.Printf("Time conflict detected when changing booking '%s'", confID)
             return "Time conflict with an existing booking.", 1
         }
     }
 
-    // 4) Recreate the updated booking, reusing participants
     updated := Booking{
         ConfirmationID: confID,
         StartDay:       req.StartDay,
@@ -271,52 +263,53 @@ func (s *ServerState) handleChangeBooking(req common.RequestMessage) (string, in
         EndDay:         req.EndDay,
         EndHour:        req.EndHour,
         EndMinute:      req.EndMinute,
-        Participants:   oldParticipants, // Keep old list of participants
+        Participants:   oldParticipants,
     }
     oldFac.Bookings = append(oldFac.Bookings, updated)
 
-    // 5) Notify subscribers
     s.notifySubscribers(facName,
         fmt.Sprintf("Booking %s changed to Day %d(%02d:%02d) -> Day %d(%02d:%02d)",
             confID,
             req.StartDay, req.StartHour, req.StartMinute,
             req.EndDay, req.EndHour, req.EndMinute))
-
-    return fmt.Sprintf("Changed booking %s to new times, no conflict.", confID), 0
+    msg := fmt.Sprintf("Changed booking %s to new times, no conflict.", confID)
+    log.Printf("ChangeBooking successful: %s", msg)
+    return msg, 0
 }
 
-
-// handleMonitorRegistration just adds a subscription entry
+// handleMonitorRegistration adds a subscription entry.
 func (s *ServerState) handleMonitorRegistration(clientAddr *net.UDPAddr, req common.RequestMessage) (string, int32) {
     facName := req.FacilityName
+    log.Printf("Handling MonitorAvailability for facility '%s' from %s", facName, clientAddr)
 
     s.dataLock.Lock()
     _, ok := s.facilityData[facName]
     s.dataLock.Unlock()
-
     if !ok {
+        log.Printf("Facility '%s' not found in MonitorAvailability", facName)
         return fmt.Sprintf("Facility '%s' not found", facName), -1
     }
 
     duration := req.MonitorPeriod
     expiry := time.Now().Add(time.Duration(duration) * time.Second)
-
     sub := MonitorRegistration{
         ClientAddr:   clientAddr,
         FacilityName: facName,
         ExpiresAt:    expiry,
     }
-
     s.monitorLock.Lock()
     s.monitorSubs = append(s.monitorSubs, sub)
     s.monitorLock.Unlock()
 
-    return fmt.Sprintf("Monitoring %s for %d seconds.", facName, duration), 0
+    msg := fmt.Sprintf("Monitoring %s for %d seconds.", facName, duration)
+    log.Printf("MonitorRegistration successful: %s", msg)
+    return msg, 0
 }
 
-// handleCancelBooking is idempotent: removing the same booking twice is harmless
+// handleCancelBooking removes a booking; idempotent operation.
 func (s *ServerState) handleCancelBooking(req common.RequestMessage) (string, int32) {
     confID := req.ConfirmationID
+    log.Printf("Handling CancelBooking for ConfirmationID '%s'", confID)
 
     s.dataLock.Lock()
     defer s.dataLock.Unlock()
@@ -324,35 +317,34 @@ func (s *ServerState) handleCancelBooking(req common.RequestMessage) (string, in
     for facName, fac := range s.facilityData {
         for i, bk := range fac.Bookings {
             if bk.ConfirmationID == confID {
-                // Remove it
                 fac.Bookings = append(fac.Bookings[:i], fac.Bookings[i+1:]...)
                 s.notifySubscribers(facName, fmt.Sprintf("Booking %s canceled", confID))
-                return fmt.Sprintf("Canceled booking %s", confID), 0
+                msg := fmt.Sprintf("Canceled booking %s", confID)
+                log.Printf("CancelBooking successful: %s", msg)
+                return msg, 0
             }
         }
     }
 
-    // If we didn't find it, it's either already canceled or never existed
+    log.Printf("Booking '%s' not found in CancelBooking (may be already canceled)", confID)
     return fmt.Sprintf("Booking %s not found (already canceled?)", confID), 0
 }
 
-// handleAddParticipant is the non-idempotent example
-// We'll just log the action. If repeated, it "re-adds" a participant.
+// handleAddParticipant appends a participant to a booking; non-idempotent.
 func (s *ServerState) handleAddParticipant(req common.RequestMessage) (string, int32) {
     confID := req.ConfirmationID
     participant := req.ParticipantName
+    log.Printf("Handling AddParticipant: adding '%s' to booking '%s'", participant, confID)
 
     s.dataLock.Lock()
     defer s.dataLock.Unlock()
 
     var foundBooking *Booking
     var facName string
-
-    // Locate the booking in any facility
     for fn, fac := range s.facilityData {
         for i := range fac.Bookings {
             if fac.Bookings[i].ConfirmationID == confID {
-                foundBooking = &fac.Bookings[i] // pointer to the booking in slice
+                foundBooking = &fac.Bookings[i]
                 facName = fn
                 break
             }
@@ -362,25 +354,18 @@ func (s *ServerState) handleAddParticipant(req common.RequestMessage) (string, i
         }
     }
     if foundBooking == nil {
+        log.Printf("Booking '%s' not found in AddParticipant", confID)
         return fmt.Sprintf("Error: Booking %s not found", confID), -1
     }
 
-    // Append participant
-    // This is non-idempotent because repeated calls will keep adding the same name
     foundBooking.Participants = append(foundBooking.Participants, participant)
-
-    // Notify watchers
-    s.notifySubscribers(facName,
-        fmt.Sprintf("Participant %s added to booking %s", participant, confID))
-
-    return fmt.Sprintf("Added participant=%s to booking=%s", participant, confID), 0
+    s.notifySubscribers(facName, fmt.Sprintf("Participant %s added to booking %s", participant, confID))
+    msg := fmt.Sprintf("Added participant=%s to booking=%s", participant, confID)
+    log.Printf("AddParticipant successful: %s", msg)
+    return msg, 0
 }
 
-// -----------------------------------------------------------------------------
-// Helper functions
-// -----------------------------------------------------------------------------
-
-// A trivial function that returns a summary of all bookings for the facility
+// listAllBookings returns a summary of all bookings for a facility.
 func (s *ServerState) listAllBookings(fac *FacilityInfo) string {
     if len(fac.Bookings) == 0 {
         return fmt.Sprintf("Facility=%s has no bookings.", fac.Name)
@@ -399,10 +384,9 @@ func (s *ServerState) listAllBookings(fac *FacilityInfo) string {
     return result
 }
 
-
-
-// processOperation dispatches to the correct handler based on OpCode
+// processOperation dispatches to the correct handler based on OpCode.
 func (s *ServerState) processOperation(req common.RequestMessage, clientAddr *net.UDPAddr) common.ReplyMessage {
+    log.Printf("Processing operation with OpCode %d for RequestID %d", req.OpCode, req.RequestID)
     rep := common.ReplyMessage{
         RequestID: req.RequestID,
         OpCode:    req.OpCode,
@@ -411,41 +395,33 @@ func (s *ServerState) processOperation(req common.RequestMessage, clientAddr *ne
     }
 
     switch req.OpCode {
-
     case common.OpQueryAvailability:
-        dataStr := s.handleQuery(req.FacilityName, req.DaysList)
-        rep.Data = dataStr
-
+        rep.Data = s.handleQuery(req.FacilityName, req.DaysList)
     case common.OpBookFacility:
         msg, status := s.handleBookFacility(req)
         rep.Data = msg
         rep.Status = status
-
     case common.OpChangeBooking:
         msg, status := s.handleChangeBooking(req)
         rep.Data = msg
         rep.Status = status
-
     case common.OpMonitorAvailability:
         msg, status := s.handleMonitorRegistration(clientAddr, req)
         rep.Data = msg
         rep.Status = status
-
     case common.OpCancelBooking:
         msg, status := s.handleCancelBooking(req)
         rep.Data = msg
         rep.Status = status
-
     case common.OpAddParticipant:
         msg, status := s.handleAddParticipant(req)
         rep.Data = msg
         rep.Status = status
-
     default:
         rep.Status = -1
         rep.Data = fmt.Sprintf("Unknown OpCode %d", req.OpCode)
     }
 
+    log.Printf("Processed RequestID %d with result: %s (Status=%d)", req.RequestID, rep.Data, rep.Status)
     return rep
 }
-
