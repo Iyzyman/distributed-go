@@ -3,11 +3,9 @@ package main
 
 import (
     "flag"
-    "fmt"
     "log"
     "net"
     "strings"
-    "time"
 )
 
 // Command-line flags for server

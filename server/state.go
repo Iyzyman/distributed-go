@@ -7,7 +7,7 @@ import (
     "sync"
     "time"
 
-    "../common"
+    "github.com/Iyzyman/distributed-go/common"
 )
 
 // Constants for invocation semantics
