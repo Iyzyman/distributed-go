@@ -144,7 +144,11 @@ func (c *ClientState) handleQueryAvailability(reader *bufio.Reader) {
 
 	// Display result
 	fmt.Println("\nQuery Result:")
-	fmt.Println(reply.Data)
+	if reply.Status == 0 {
+		fmt.Println(reply.Data)
+	} else {
+		fmt.Printf("Error: %s\n", reply.Data)
+	}
 }
 
 // handleBookFacility implements the Book operation
@@ -182,10 +186,11 @@ func (c *ClientState) handleBookFacility(reader *bufio.Reader) {
 	// Display result
 	if reply.Status == 0 {
 		fmt.Println("\nBooking successful!")
+		fmt.Println(reply.Data)
 	} else {
 		fmt.Println("\nBooking failed!")
+		fmt.Printf("Error: %s\n", reply.Data)
 	}
-	fmt.Println(reply.Data)
 }
 
 // handleChangeBooking implements the Change operation
@@ -296,7 +301,10 @@ func (c *ClientState) handleMonitorAvailability(reader *bufio.Reader) {
 				continue
 			}
 
-			fmt.Printf("\nCallback received: %s\n", callback.Data)
+			// Only print if it's a monitoring callback
+			if strings.Contains(callback.Data, "Facility=") {
+				fmt.Printf("\n%s\n", callback.Data)
+			}
 		}
 	}()
 }
@@ -358,8 +366,9 @@ func (c *ClientState) handleAddParticipant(reader *bufio.Reader) {
 	// Display result
 	if reply.Status == 0 {
 		fmt.Println("\nParticipant added successfully!")
+		fmt.Println(reply.Data)
 	} else {
 		fmt.Println("\nFailed to add participant!")
+		fmt.Printf("Error: %s\n", reply.Data)
 	}
-	fmt.Println(reply.Data)
 }
