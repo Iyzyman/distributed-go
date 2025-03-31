@@ -193,45 +193,45 @@ func (c *ClientState) handleBookFacility(reader *bufio.Reader) {
 	}
 }
 
-// handleChangeBooking implements the Change operation
+// handleChangeBooking implements the Change operation using an offset.
 func (c *ClientState) handleChangeBooking(reader *bufio.Reader) {
-	fmt.Print("Enter Confirmation ID: ")
-	confirmationID, _ := reader.ReadString('\n')
-	confirmationID = strings.TrimSpace(confirmationID)
+    // Prompt for the booking confirmation ID.
+    fmt.Print("Enter Confirmation ID: ")
+    confirmationID, _ := reader.ReadString('\n')
+    confirmationID = strings.TrimSpace(confirmationID)
 
-	startDay, startHour, startMin, endDay, endHour, endMin, err := utils.ReadBookingTimes(reader)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
+    // Prompt for the offset (in minutes).
+    fmt.Print("Enter offset in minutes (positive to advance, negative to postpone): ")
+    offsetStr, _ := reader.ReadString('\n')
+    offsetStr = strings.TrimSpace(offsetStr)
+    offset, err := strconv.Atoi(offsetStr)
+    if err != nil {
+        fmt.Printf("Error parsing offset: %v\n", err)
+        return
+    }
 
-	// Create request
-	req := common.RequestMessage{
-		OpCode:         common.OpChangeBooking,
-		RequestID:      c.GetNextRequestID(),
-		ConfirmationID: confirmationID,
-		StartDay:       startDay,
-		StartHour:      startHour,
-		StartMinute:    startMin,
-		EndDay:         endDay,
-		EndHour:        endHour,
-		EndMinute:      endMin,
-	}
+    // Create the request with the offset.
+    req := common.RequestMessage{
+        OpCode:         common.OpChangeBooking,
+        RequestID:      c.GetNextRequestID(),
+        ConfirmationID: confirmationID,
+        OffsetMinutes:  int32(offset),
+    }
 
-	// Send request and get reply
-	reply, err := c.SendRequest(req)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
+    // Send request and get reply.
+    reply, err := c.SendRequest(req)
+    if err != nil {
+        fmt.Printf("Error sending request: %v\n", err)
+        return
+    }
 
-	// Display result
-	if reply.Status == 0 {
-		fmt.Println("\nBooking changed successfully!")
-	} else {
-		fmt.Println("\nFailed to change booking!")
-	}
-	fmt.Println(reply.Data)
+    // Display result.
+    if reply.Status == 0 {
+        fmt.Println("\nBooking changed successfully!")
+    } else {
+        fmt.Println("\nFailed to change booking!")
+    }
+    fmt.Println(reply.Data)
 }
 
 // handleMonitorAvailability implements the Monitor operation
