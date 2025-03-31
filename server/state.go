@@ -22,12 +22,27 @@ type RequestKey struct {
     RequestID uint64
 }
 
-// FacilityInfo is an example structure for storing data about a facility.
-type FacilityInfo struct {
-    Name     string
-    Bookings []string // Minimal example; you'd store real booking times/IDs
+// Booking holds detailed info about one booking
+type Booking struct {
+    ConfirmationID string
+
+    // Start time
+    StartDay    uint8 // 0=Monday..6=Sunday
+    StartHour   uint8 // 0..23
+    StartMinute uint8 // 0..59
+
+    // End time
+    EndDay    uint8 // 0=Monday..6=Sunday
+    EndHour   uint8 // 0..23
+    EndMinute uint8 // 0..59
+    Participants []string
 }
 
+// FacilityInfo stores everything about one facility
+type FacilityInfo struct {
+    Name     string
+    Bookings []Booking
+}
 // MonitorRegistration holds callback info for a monitoring client
 type MonitorRegistration struct {
     ClientAddr   *net.UDPAddr
@@ -62,12 +77,48 @@ func NewServerState(semantics string) *ServerState {
         monitorSubs:  make([]MonitorRegistration, 0),
     }
 
-    // Seed some example facilities
-    srv.facilityData["RoomA"] = &FacilityInfo{Name: "RoomA"}
-    srv.facilityData["Lab1"]  = &FacilityInfo{Name: "Lab1"}
-
     // Seed random for demonstration (e.g. for generating booking IDs)
     rand.Seed(time.Now().UnixNano())
+
+    // Seed some example facilities & bookings
+    srv.facilityData["RoomA"] = &FacilityInfo{
+        Name: "RoomA",
+        Bookings: []Booking{
+            {
+                ConfirmationID: "BKG-10000",
+                StartDay:       0, // Monday
+                StartHour:      9,
+                StartMinute:    0,
+                EndDay:         0,
+                EndHour:        10,
+                EndMinute:      0,
+            },
+            {
+                ConfirmationID: "BKG-10001",
+                StartDay:       1, // Tuesday
+                StartHour:      14,
+                StartMinute:    0,
+                EndDay:         1,
+                EndHour:        15,
+                EndMinute:      30,
+            },
+        },
+    }
+
+    srv.facilityData["Lab1"] = &FacilityInfo{
+        Name: "Lab1",
+        Bookings: []Booking{
+            {
+                ConfirmationID: "BKG-20000",
+                StartDay:       2, // Wednesday
+                StartHour:      10,
+                StartMinute:    0,
+                EndDay:         2,
+                EndHour:        12,
+                EndMinute:      0,
+            },
+        },
+    }
 
     return srv
 }
