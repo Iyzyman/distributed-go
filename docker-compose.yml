@@ -1,0 +1,23 @@
+services:
+  server:
+    build: .
+    container_name: ds_server
+    ports:
+      - "2222:2222/udp"
+    # Use the default CMD from the Dockerfile or override if desired.
+    command: [ "./server/server", "--port=2222", "--semantics=at-most-once" ]
+
+  client1:
+    build: .
+    container_name: ds_client1
+    depends_on:
+      - server
+    # Override CMD to run the client, passing the server address via the container network.
+    command: [ "sleep", "infinity" ]
+
+  client2:
+    build: .
+    container_name: ds_client2
+    depends_on:
+      - server
+    command: [ "sleep", "infinity" ]

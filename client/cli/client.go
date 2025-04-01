@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type ClientState struct {
 	Timeout     time.Duration
 	NextReqID   uint64
 	MonitorMode bool
+	PacketDemo  bool
 }
 
 // RunCLI presents a menu and handles user input
@@ -78,41 +80,54 @@ func (c *ClientState) GetNextRequestID() uint64 {
 
 // SendRequest sends a request to the server and waits for a reply
 func (c *ClientState) SendRequest(req common.RequestMessage) (*common.ReplyMessage, error) {
-	// Marshal the request
-	data, err := common.MarshalRequest(req)
-	if err != nil {
-		return nil, fmt.Errorf("error marshalling request: %v", err)
-	}
+    data, err := common.MarshalRequest(req)
+    if err != nil {
+        return nil, fmt.Errorf("error marshalling: %w", err)
+    }
+    maxRetries := 4
+    for attempt := 0; attempt < maxRetries; attempt++ {
+        // Send the request
+        _, err = c.Conn.Write(data)
+        if err != nil {
+            return nil, fmt.Errorf("error sending request: %w", err)
+        }
+        
+        // Set deadline
+        c.Conn.SetReadDeadline(time.Now().Add(c.Timeout))
 
-	// Send to server
-	_, err = c.Conn.Write(data)
-	if err != nil {
-		return nil, fmt.Errorf("error sending request: %v", err)
-	}
+        // Wait for reply
+        buffer := make([]byte, 2048)
+        n, _, err := c.Conn.ReadFromUDP(buffer)
+        if err == nil {
+            // Check if we're simulating a packet loss after receiving a valid reply
+			value := rand.Float32()
+			
+            if c.PacketDemo && value < 0.5 {
+                fmt.Printf("Simulating lost reply on attempt %d (packetDemo=true)\n", attempt+1)
+                // Pretend no data was received => force a timeout-like scenario, so the loop retries.
+                fmt.Printf("Timeout on attempt %d, retrying...\n", attempt+1)
+                continue
+            }
 
-	// Set read deadline for timeout
-	err = c.Conn.SetReadDeadline(time.Now().Add(c.Timeout))
-	if err != nil {
-		return nil, fmt.Errorf("error setting read deadline: %v", err)
-	}
+            // If no simulated packet loss, proceed with normal unmarshal
+            reply, umErr := common.UnmarshalReply(buffer[:n])
+            if umErr != nil {
+                return nil, fmt.Errorf("error unmarshalling reply: %w", umErr)
+            }
+            return &reply, nil
+        }
 
-	// Wait for reply
-	buffer := make([]byte, 2048)
-	n, _, err := c.Conn.ReadFromUDP(buffer)
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return nil, fmt.Errorf("timeout waiting for server reply")
-		}
-		return nil, fmt.Errorf("error reading reply: %v", err)
-	}
-
-	// Unmarshal the reply
-	reply, err := common.UnmarshalReply(buffer[:n])
-	if err != nil {
-		return nil, fmt.Errorf("error unmarshalling reply: %v", err)
-	}
-
-	return &reply, nil
+        if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+            // timed out, go for next attempt
+            fmt.Printf("Timeout on attempt %d, retrying...\n", attempt+1)
+            continue
+        }
+        
+        // If it's some other error, break immediately
+        return nil, fmt.Errorf("error reading reply: %w", err)
+    }
+    // If we exhaust all retries
+    return nil, fmt.Errorf("no reply after %d attempts", maxRetries)
 }
 
 // handleQueryAvailability implements the Query operation

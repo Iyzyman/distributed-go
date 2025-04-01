@@ -133,7 +133,8 @@ func (s *ServerState) handleQuery(name string, days []uint8) string {
 			if len(bk.Participants) > 0 {
 				result += fmt.Sprintf("      Participants: %v\n", bk.Participants)
 			}
-		}
+		} else {
+			result += fmt.Sprintf("No Bookings")}
 	}
 	log.Printf("Query result for '%s': %s", name, result)
 	return result

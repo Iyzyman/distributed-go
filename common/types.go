@@ -31,7 +31,7 @@ type RequestMessage struct {
 
 	// For ChangeBooking / CancelBooking / AddParticipant
 	ConfirmationID string
-
+	OffsetMinutes  int32
 	// For MonitorAvailability
 	MonitorPeriod uint32
 
