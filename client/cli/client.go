@@ -103,7 +103,7 @@ func (c *ClientState) SendRequest(req common.RequestMessage) (*common.ReplyMessa
 			value := rand.Float32()
 			
             if c.PacketDemo && value < 0.5 {
-                fmt.Printf("Simulating lost reply on attempt %d (packetDemo=true)\n", attempt+1)
+                fmt.Printf("Packet lost reply on attempt %d \n", attempt+1)
                 // Pretend no data was received => force a timeout-like scenario, so the loop retries.
                 fmt.Printf("Timeout on attempt %d, retrying...\n", attempt+1)
                 continue

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"time"
+	"strings"
 
 	"github.com/Iyzyman/distributed-go/common"
 )
@@ -107,38 +108,111 @@ func (s *ServerState) notifySubscribers(facility, updateMsg string) {
 	s.monitorSubs = newSubs
 }
 
-// handleQuery returns a string listing bookings on the specified days for the facility
-func (s *ServerState) handleQuery(name string, days []uint8) string {
-	log.Printf("Handling Query for facility '%s' on days %v", name, days)
-	s.dataLock.Lock()
-	fac, ok := s.facilityData[name]
-	s.dataLock.Unlock()
-	if !ok {
-		log.Printf("Facility '%s' not found during Query", name)
-		return fmt.Sprintf("Error: Facility '%s' not found", name)
-	}
-	if len(days) == 0 {
-		result := s.listAllBookings(fac)
-		log.Printf("Query result for '%s': %s", name, result)
-		return result
-	}
-	result := fmt.Sprintf("Facility=%s availability for days=%v:\n", name, days)
-	for _, bk := range fac.Bookings {
-		if intersectsDays(bk, days) {
-			result += fmt.Sprintf("  - %s: Day %d (%02d:%02d) to Day %d (%02d:%02d)\n",
-				bk.ConfirmationID,
-				bk.StartDay, bk.StartHour, bk.StartMinute,
-				bk.EndDay, bk.EndHour, bk.EndMinute,
-			)
-			if len(bk.Participants) > 0 {
-				result += fmt.Sprintf("      Participants: %v\n", bk.Participants)
-			}
-		} else {
-			result += fmt.Sprintf("No Bookings")}
-	}
-	log.Printf("Query result for '%s': %s", name, result)
-	return result
+// availableTimingsForDay computes available time intervals (as a string)
+// for a given day from the list of bookings.
+// It clips any booking that spans multiple days to the boundaries of the day.
+func availableTimingsForDay(day uint8, bookings []Booking) string {
+    dayStart := int32(day) * 1440
+    dayEnd := int32(day+1) * 1440
+
+    // Gather bookings that overlap with this day and clip them to day boundaries.
+    type interval struct {
+        start, end int32
+    }
+    var dayIntervals []interval
+    for _, bk := range bookings {
+        // Check if booking intersects the day
+        if bk.EndDay < day || bk.StartDay > day {
+            continue
+        }
+        // Convert booking start and end to absolute minutes.
+        bkStart := toAbsoluteMinutes(bk.StartDay, bk.StartHour, bk.StartMinute)
+        bkEnd := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
+        // Clip booking to day boundaries.
+       	if bkStart < dayStart {
+            bkStart = dayStart
+        }
+        if bkEnd > dayEnd {
+            bkEnd = dayEnd
+        }
+        dayIntervals = append(dayIntervals, interval{bkStart, bkEnd})
+    }
+
+    // Sort the intervals by start time.
+    for i := 1; i < len(dayIntervals); i++ {
+        key := dayIntervals[i]
+        j := i - 1
+        for j >= 0 && dayIntervals[j].start > key.start {
+            dayIntervals[j+1] = dayIntervals[j]
+            j--
+        }
+        dayIntervals[j+1] = key
+    }
+
+    // Now compute available intervals.
+   	available := ""
+    current := dayStart
+    for _, iv := range dayIntervals {
+        if iv.start > current {
+            available += fmt.Sprintf("%02d:%02d-%02d:%02d, ", current/60, current%60, iv.start/60, iv.start%60)
+        }
+        if iv.end > current {
+            current = iv.end
+        }
+    }
+    if current < dayEnd {
+        available += fmt.Sprintf("%02d:%02d-24:00", current/60, current%60)
+    }
+    available = strings.TrimSuffix(available, ", ")
+    if available == "" {
+        available = "Fully booked"
+    }
+    return available
 }
+
+// handleQuery returns a formatted string showing the availability of a facility
+// for the specified days. The output is formatted as:
+//   Day X:
+//     Current bookings:
+//       - <booking details>
+//     Available timings: <free intervals>
+func (s *ServerState) handleQuery(name string, days []uint8) string {
+    log.Printf("Handling Query for facility '%s' on days %v", name, days)
+    s.dataLock.Lock()
+    fac, ok := s.facilityData[name]
+    s.dataLock.Unlock()
+    if !ok {
+        log.Printf("Facility '%s' not found during Query", name)
+        return fmt.Sprintf("Error: Facility '%s' not found", name)
+    }
+    result := fmt.Sprintf("Facility %s availability:\n", name)
+    for _, day := range days {
+        result += fmt.Sprintf("Day %d:\n", day)
+        bookingsStr := ""
+        for _, bk := range fac.Bookings {
+            // Check if the booking intersects the day.
+            if bk.StartDay <= day && bk.EndDay >= day {
+                bookingsStr += fmt.Sprintf("  - %s: %02d:%02d to %02d:%02d\n",
+                    bk.ConfirmationID,
+                    bk.StartHour, bk.StartMinute,
+                    bk.EndHour, bk.EndMinute,
+                )
+                if len(bk.Participants) > 0 {
+                    bookingsStr += fmt.Sprintf("      Participants: %v\n", bk.Participants)
+                }
+            }
+        }
+        if bookingsStr == "" {
+            bookingsStr = "  None\n"
+        }
+        result += "Current bookings:\n" + bookingsStr
+        avail := availableTimingsForDay(day, fac.Bookings)
+        result += "Available timings: " + avail + "\n\n"
+    }
+    log.Printf("Query result for '%s': %s", name, result)
+    return result
+}
+
 
 // timesOverlap returns true if [start1, end1) intersects [start2, end2).
 func timesOverlap(start1, end1, start2, end2 int32) bool {
