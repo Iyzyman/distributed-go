@@ -80,55 +80,59 @@ func (c *ClientState) GetNextRequestID() uint64 {
 
 // SendRequest sends a request to the server and waits for a reply
 func (c *ClientState) SendRequest(req common.RequestMessage) (*common.ReplyMessage, error) {
+    // Marshal the request
     data, err := common.MarshalRequest(req)
     if err != nil {
         return nil, fmt.Errorf("error marshalling: %w", err)
     }
-    maxRetries := 4
-    for attempt := 0; attempt < maxRetries; attempt++ {
+
+    attempts := 0 // Counter for the number of attempts
+
+    for {
+        attempts++ // Increment attempt counter
+
         // Send the request
         _, err = c.Conn.Write(data)
         if err != nil {
             return nil, fmt.Errorf("error sending request: %w", err)
         }
-        
-        // Set deadline
+
+        // Set deadline for reading the reply
         c.Conn.SetReadDeadline(time.Now().Add(c.Timeout))
 
         // Wait for reply
         buffer := make([]byte, 2048)
         n, _, err := c.Conn.ReadFromUDP(buffer)
+
         if err == nil {
-            // Check if we're simulating a packet loss after receiving a valid reply
-			value := rand.Float32()
-			
-            if c.PacketDemo && value < 0.5 {
-                fmt.Printf("Packet lost reply on attempt %d \n", attempt+1)
-                // Pretend no data was received => force a timeout-like scenario, so the loop retries.
-                fmt.Printf("Timeout on attempt %d, retrying...\n", attempt+1)
-                continue
+            // Simulate packet loss if enabled
+            if c.PacketDemo && rand.Float32() < 0.5 {
+                fmt.Printf("Packet Loss on attempt %d.\n", attempts)
+                continue // Retry due to simulated packet loss
             }
 
-            // If no simulated packet loss, proceed with normal unmarshal
+            // Unmarshal the reply if no simulated packet loss
             reply, umErr := common.UnmarshalReply(buffer[:n])
             if umErr != nil {
                 return nil, fmt.Errorf("error unmarshalling reply: %w", umErr)
             }
+
+            fmt.Printf("Reply received on attempt %d.\n", attempts)
             return &reply, nil
         }
 
+        // Handle timeout errors specifically
         if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-            // timed out, go for next attempt
-            fmt.Printf("Timeout on attempt %d, retrying...\n", attempt+1)
+            fmt.Printf("Timeout on attempt %d, retrying...\n", attempts)
             continue
         }
-        
-        // If it's some other error, break immediately
-        return nil, fmt.Errorf("error reading reply: %w", err)
+
+        // For all other errors, return immediately
+        return nil, fmt.Errorf("non-timeout error: %w", err)
     }
-    // If we exhaust all retries
-    return nil, fmt.Errorf("no reply after %d attempts", maxRetries)
 }
+
+
 
 // handleQueryAvailability implements the Query operation
 func (c *ClientState) handleQueryAvailability(reader *bufio.Reader) {
