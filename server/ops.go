@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/Iyzyman/distributed-go/common"
 )
@@ -112,107 +112,107 @@ func (s *ServerState) notifySubscribers(facility, updateMsg string) {
 // for a given day from the list of bookings.
 // It clips any booking that spans multiple days to the boundaries of the day.
 func availableTimingsForDay(day uint8, bookings []Booking) string {
-    dayStart := int32(day) * 1440
-    dayEnd := int32(day+1) * 1440
+	dayStart := int32(day) * 1440
+	dayEnd := int32(day+1) * 1440
 
-    // Gather bookings that overlap with this day and clip them to day boundaries.
-    type interval struct {
-        start, end int32
-    }
-    var dayIntervals []interval
-    for _, bk := range bookings {
-        // Check if booking intersects the day
-        if bk.EndDay < day || bk.StartDay > day {
-            continue
-        }
-        // Convert booking start and end to absolute minutes.
-        bkStart := toAbsoluteMinutes(bk.StartDay, bk.StartHour, bk.StartMinute)
-        bkEnd := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
-        // Clip booking to day boundaries.
-       	if bkStart < dayStart {
-            bkStart = dayStart
-        }
-        if bkEnd > dayEnd {
-            bkEnd = dayEnd
-        }
-        dayIntervals = append(dayIntervals, interval{bkStart, bkEnd})
-    }
+	// Gather bookings that overlap with this day and clip them to day boundaries.
+	type interval struct {
+		start, end int32
+	}
+	var dayIntervals []interval
+	for _, bk := range bookings {
+		// Check if booking intersects the day
+		if bk.EndDay < day || bk.StartDay > day {
+			continue
+		}
+		// Convert booking start and end to absolute minutes.
+		bkStart := toAbsoluteMinutes(bk.StartDay, bk.StartHour, bk.StartMinute)
+		bkEnd := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
+		// Clip booking to day boundaries.
+		if bkStart < dayStart {
+			bkStart = dayStart
+		}
+		if bkEnd > dayEnd {
+			bkEnd = dayEnd
+		}
+		dayIntervals = append(dayIntervals, interval{bkStart, bkEnd})
+	}
 
-    // Sort the intervals by start time.
-    for i := 1; i < len(dayIntervals); i++ {
-        key := dayIntervals[i]
-        j := i - 1
-        for j >= 0 && dayIntervals[j].start > key.start {
-            dayIntervals[j+1] = dayIntervals[j]
-            j--
-        }
-        dayIntervals[j+1] = key
-    }
+	// Sort the intervals by start time.
+	for i := 1; i < len(dayIntervals); i++ {
+		key := dayIntervals[i]
+		j := i - 1
+		for j >= 0 && dayIntervals[j].start > key.start {
+			dayIntervals[j+1] = dayIntervals[j]
+			j--
+		}
+		dayIntervals[j+1] = key
+	}
 
-    // Now compute available intervals.
-   	available := ""
-    current := dayStart
-    for _, iv := range dayIntervals {
-        if iv.start > current {
-            available += fmt.Sprintf("%02d:%02d-%02d:%02d, ", current/60, current%60, iv.start/60, iv.start%60)
-        }
-        if iv.end > current {
-            current = iv.end
-        }
-    }
-    if current < dayEnd {
-        available += fmt.Sprintf("%02d:%02d-24:00", current/60, current%60)
-    }
-    available = strings.TrimSuffix(available, ", ")
-    if available == "" {
-        available = "Fully booked"
-    }
-    return available
+	// Now compute available intervals.
+	available := ""
+	current := dayStart
+	for _, iv := range dayIntervals {
+		if iv.start > current {
+			available += fmt.Sprintf("%02d:%02d-%02d:%02d, ", current/60, current%60, iv.start/60, iv.start%60)
+		}
+		if iv.end > current {
+			current = iv.end
+		}
+	}
+	if current < dayEnd {
+		available += fmt.Sprintf("%02d:%02d-24:00", current/60, current%60)
+	}
+	available = strings.TrimSuffix(available, ", ")
+	if available == "" {
+		available = "Fully booked"
+	}
+	return available
 }
 
 // handleQuery returns a formatted string showing the availability of a facility
 // for the specified days. The output is formatted as:
-//   Day X:
-//     Current bookings:
-//       - <booking details>
-//     Available timings: <free intervals>
+//
+//	Day X:
+//	  Current bookings:
+//	    - <booking details>
+//	  Available timings: <free intervals>
 func (s *ServerState) handleQuery(name string, days []uint8) string {
-    log.Printf("Handling Query for facility '%s' on days %v", name, days)
-    s.dataLock.Lock()
-    fac, ok := s.facilityData[name]
-    s.dataLock.Unlock()
-    if !ok {
-        log.Printf("Facility '%s' not found during Query", name)
-        return fmt.Sprintf("Error: Facility '%s' not found", name)
-    }
-    result := fmt.Sprintf("Facility %s availability:\n", name)
-    for _, day := range days {
-        result += fmt.Sprintf("Day %d:\n", day)
-        bookingsStr := ""
-        for _, bk := range fac.Bookings {
-            // Check if the booking intersects the day.
-            if bk.StartDay <= day && bk.EndDay >= day {
-                bookingsStr += fmt.Sprintf("  - %s: %02d:%02d to %02d:%02d\n",
-                    bk.ConfirmationID,
-                    bk.StartHour, bk.StartMinute,
-                    bk.EndHour, bk.EndMinute,
-                )
-                if len(bk.Participants) > 0 {
-                    bookingsStr += fmt.Sprintf("      Participants: %v\n", bk.Participants)
-                }
-            }
-        }
-        if bookingsStr == "" {
-            bookingsStr = "  None\n"
-        }
-        result += "Current bookings:\n" + bookingsStr
-        avail := availableTimingsForDay(day, fac.Bookings)
-        result += "Available timings: " + avail + "\n\n"
-    }
-    log.Printf("Query result for '%s': %s", name, result)
-    return result
+	log.Printf("Handling Query for facility '%s' on days %v", name, days)
+	s.dataLock.Lock()
+	fac, ok := s.facilityData[name]
+	s.dataLock.Unlock()
+	if !ok {
+		log.Printf("Facility '%s' not found during Query", name)
+		return fmt.Sprintf("Error: Facility '%s' not found", name)
+	}
+	result := fmt.Sprintf("Facility %s availability:\n", name)
+	for _, day := range days {
+		result += fmt.Sprintf("Day %d:\n", day)
+		bookingsStr := ""
+		for _, bk := range fac.Bookings {
+			// Check if the booking intersects the day.
+			if bk.StartDay <= day && bk.EndDay >= day {
+				bookingsStr += fmt.Sprintf("  - %s: %02d:%02d to %02d:%02d\n",
+					bk.ConfirmationID,
+					bk.StartHour, bk.StartMinute,
+					bk.EndHour, bk.EndMinute,
+				)
+				if len(bk.Participants) > 0 {
+					bookingsStr += fmt.Sprintf("      Participants: %v\n", bk.Participants)
+				}
+			}
+		}
+		if bookingsStr == "" {
+			bookingsStr = "  None\n"
+		}
+		result += "Current bookings:\n" + bookingsStr
+		avail := availableTimingsForDay(day, fac.Bookings)
+		result += "Available timings: " + avail + "\n\n"
+	}
+	log.Printf("Query result for '%s': %s", name, result)
+	return result
 }
-
 
 // timesOverlap returns true if [start1, end1) intersects [start2, end2).
 func timesOverlap(start1, end1, start2, end2 int32) bool {
@@ -280,31 +280,27 @@ func (s *ServerState) handleBookFacility(req common.RequestMessage) (string, int
 	return msg, 0
 }
 
-// handleChangeBooking locates the booking by ConfirmationID and updates its time.
+// fromAbsoluteMinutes converts an absolute minute value to day, hour, and minute.
+// For example, if a day has 1440 minutes (24 hours).
+func fromAbsoluteMinutes(total int) (uint8, uint8, uint8) {
+	day := total / 1440
+	rem := total % 1440
+	hour := rem / 60
+	minute := rem % 60
+	return uint8(day), uint8(hour), uint8(minute)
+}
+
+// handleChangeBooking locates the booking by ConfirmationID and updates its time using OffsetMinutes.
 func (s *ServerState) handleChangeBooking(req common.RequestMessage) (string, int32) {
+	offset := req.OffsetMinutes
 	confID := req.ConfirmationID
 	log.Printf("Handling ChangeBooking for ConfirmationID '%s'", confID)
-
-	// Log the raw request values
-	log.Printf("Received values - Start: Day=%d, Hour=%d, Min=%d, End: Day=%d, Hour=%d, Min=%d",
-		req.StartDay, req.StartHour, req.StartMinute,
-		req.EndDay, req.EndHour, req.EndMinute)
-
-	// Convert times to absolute minutes for comparison
-	newStart := toAbsoluteMinutes(req.StartDay, req.StartHour, req.StartMinute)
-	newEnd := toAbsoluteMinutes(req.EndDay, req.EndHour, req.EndMinute)
-
-	// Log the time comparison for debugging
-	log.Printf("Time comparison: start=%d, end=%d", newStart, newEnd)
-
-	if newEnd <= newStart {
-		log.Printf("Invalid new times: end time (%d) is not after start time (%d)", newEnd, newStart)
-		return "Error: End time must be after start time.", -1
-	}
+	log.Printf("Received offset (in minutes): %d", offset)
 
 	s.dataLock.Lock()
 	defer s.dataLock.Unlock()
 
+	// Locate the booking using ConfirmationID.
 	var oldBooking *Booking
 	var oldFac *FacilityInfo
 	var oldIndex int
@@ -313,6 +309,7 @@ func (s *ServerState) handleChangeBooking(req common.RequestMessage) (string, in
 	for fName, facility := range s.facilityData {
 		for i, bk := range facility.Bookings {
 			if bk.ConfirmationID == confID {
+				// Capture a pointer to the found booking.
 				oldBooking = &bk
 				oldIndex = i
 				oldFac = facility
@@ -329,41 +326,60 @@ func (s *ServerState) handleChangeBooking(req common.RequestMessage) (string, in
 		return fmt.Sprintf("Error: Booking %s not found", confID), -1
 	}
 
-	oldParticipants := oldBooking.Participants
+	// Convert the current booking's start/end times to absolute minutes.
+	oldStart := toAbsoluteMinutes(oldBooking.StartDay, oldBooking.StartHour, oldBooking.StartMinute)
+	oldEnd := toAbsoluteMinutes(oldBooking.EndDay, oldBooking.EndHour, oldBooking.EndMinute)
+	log.Printf("Old booking times (absolute minutes): start=%d, end=%d", oldStart, oldEnd)
 
-	// Remove old booking from the list.
+	// Apply the offset to the booking times.
+	newStartAbs := oldStart + int32(offset)
+	newEndAbs := oldEnd + int32(offset)
+
+	// Validate: the new end time must be after the new start time.
+	if newEndAbs <= newStartAbs {
+		log.Printf("Invalid new times: new end time (%d) is not after new start time (%d)", newEndAbs, newStartAbs)
+		return "Error: End time must be after start time.", -1
+	}
+
+	// Convert the new times from absolute minutes back to day, hour, and minute.
+	newStartDay, newStartHour, newStartMinute := fromAbsoluteMinutes(int(newStartAbs))
+	newEndDay, newEndHour, newEndMinute := fromAbsoluteMinutes(int(newEndAbs))
+	log.Printf("New booking times: Start - Day=%d, %02d:%02d; End - Day=%d, %02d:%02d",
+		newStartDay, newStartHour, newStartMinute, newEndDay, newEndHour, newEndMinute)
+
+	// Remove the old booking from the facility's booking list.
 	oldFac.Bookings = append(oldFac.Bookings[:oldIndex], oldFac.Bookings[oldIndex+1:]...)
 
-	// Check for collision with remaining bookings.
+	// Check for time collisions with existing bookings.
 	for _, bk := range oldFac.Bookings {
-		start := toAbsoluteMinutes(bk.StartDay, bk.StartHour, bk.StartMinute)
-		end := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
-		if timesOverlap(newStart, newEnd, start, end) {
-			// Revert the removal.
+		existingStart := toAbsoluteMinutes(bk.StartDay, bk.StartHour, bk.StartMinute)
+		existingEnd := toAbsoluteMinutes(bk.EndDay, bk.EndHour, bk.EndMinute)
+		if timesOverlap(newStartAbs, newEndAbs, existingStart, existingEnd) {
+			// Collision detected; revert removal.
 			oldFac.Bookings = append(oldFac.Bookings, *oldBooking)
 			log.Printf("Time conflict detected when changing booking '%s'", confID)
 			return "Time conflict with an existing booking.", 1
 		}
 	}
 
+	// Create an updated booking with the new timings.
 	updated := Booking{
 		ConfirmationID: confID,
-		StartDay:       req.StartDay,
-		StartHour:      req.StartHour,
-		StartMinute:    req.StartMinute,
-		EndDay:         req.EndDay,
-		EndHour:        req.EndHour,
-		EndMinute:      req.EndMinute,
-		Participants:   oldParticipants,
+		StartDay:       newStartDay,
+		StartHour:      newStartHour,
+		StartMinute:    newStartMinute,
+		EndDay:         newEndDay,
+		EndHour:        newEndHour,
+		EndMinute:      newEndMinute,
+		Participants:   oldBooking.Participants,
 	}
 	oldFac.Bookings = append(oldFac.Bookings, updated)
 
+	// Notify subscribers of the timing change.
 	s.notifySubscribers(facName,
-		fmt.Sprintf("Booking %s changed to Day %d(%02d:%02d) -> Day %d(%02d:%02d)",
-			confID,
-			req.StartDay, req.StartHour, req.StartMinute,
-			req.EndDay, req.EndHour, req.EndMinute))
-	msg := fmt.Sprintf("Changed booking %s to new times, no conflict.", confID)
+		fmt.Sprintf("Booking %s changed using offset %d min: Day %d (%02d:%02d) -> Day %d (%02d:%02d)",
+			confID, offset, newStartDay, newStartHour, newStartMinute, newEndDay, newEndHour, newEndMinute))
+	msg := fmt.Sprintf("Changed booking %s by offset %d minutes successfully.", confID, offset)
 	log.Printf("ChangeBooking successful: %s", msg)
 	return msg, 0
 }
