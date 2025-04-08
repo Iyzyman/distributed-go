@@ -40,11 +40,13 @@ func MarshalRequest(req RequestMessage) ([]byte, error) {
 			req.EndDay, req.EndHour, req.EndMinute)
 
 	case OpChangeBooking:
-		// ConfirmationID
+		// Write ConfirmationID as before.
 		buf = writeString(buf, req.ConfirmationID)
-		// StartDay/Hour/Minute + EndDay/Hour/Minute (6 bytes total)
-		buf = append(buf, req.StartDay, req.StartHour, req.StartMinute,
-			req.EndDay, req.EndHour, req.EndMinute)
+
+		// Write OffsetMinutes as 4 bytes (big-endian).
+		tmp4 := make([]byte, 4)
+		binary.BigEndian.PutUint32(tmp4, uint32(req.OffsetMinutes))
+		buf = append(buf, tmp4...)
 
 	case OpMonitorAvailability:
 		// FacilityName
@@ -134,7 +136,7 @@ func UnmarshalRequest(data []byte) (RequestMessage, error) {
 		offset += 6
 
 	case OpChangeBooking:
-		// ConfirmationID
+		// Read ConfirmationID.
 		confID, newOffset, err := readString(data, offset)
 		if err != nil {
 			return req, err
@@ -142,17 +144,12 @@ func UnmarshalRequest(data []byte) (RequestMessage, error) {
 		req.ConfirmationID = confID
 		offset = newOffset
 
-		// StartDay/Hour/Minute + EndDay/Hour/Minute (6 bytes total)
-		if offset+6 > len(data) {
-			return req, fmt.Errorf("not enough bytes for booking times")
+		// Read OffsetMinutes (4 bytes).
+		if offset+4 > len(data) {
+			return req, fmt.Errorf("not enough bytes for offset minutes")
 		}
-		req.StartDay = data[offset]
-		req.StartHour = data[offset+1]
-		req.StartMinute = data[offset+2]
-		req.EndDay = data[offset+3]
-		req.EndHour = data[offset+4]
-		req.EndMinute = data[offset+5]
-		offset += 6
+		req.OffsetMinutes = int32(binary.BigEndian.Uint32(data[offset : offset+4]))
+		offset += 4
 
 	case OpMonitorAvailability:
 		// FacilityName
